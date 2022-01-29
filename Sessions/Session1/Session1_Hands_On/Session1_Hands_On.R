@@ -71,6 +71,29 @@ phrases <- spacy_tokenize(paragraphs,
 )
 v_phrases <- unlist(phrases)
 numphrases <- length(v_phrases) #8,975 sentences sum(v_phrases=="") #1
+sum(v_phrases=="") #1
+
+v_phrases <- v_phrases[-which(v_phrases=="")] #8,974 sentences
+
+#A simple histogram will do fine
+hist(nchar(v_phrases),
+     main = "Histogram of sentence size",
+     xlab = "Sentece size (number of characters)", ylab = "Ocurrences"
+)
+
+tokens <- spacy_tokenize(paragraphs
+                         #Parameters asigned by default:
+)#Returns a list v_tokens <- unlist(tokens)
+v_tokens[1:10]
+
+length(v_tokens) #442,164 tokens (many repeated)
+
+length(unique(v_tokens)) #24,130 different (unique) tokens.
+
+#As a list
+head(sort(table(v_tokens), decreasing = TRUE), n = 25)
+
+
 
 
 
