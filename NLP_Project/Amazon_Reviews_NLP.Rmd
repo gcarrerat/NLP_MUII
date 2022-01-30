@@ -1,0 +1,303 @@
+---
+title: "Amazon Reviews NLP"
+author: "Guillermo Carrera Trasobares"
+date: "1/28/2022"
+output: pdf_document
+---
+
+# Repository: https://github.com/gcarrerat/NLP_MUII
+
+# Introduction
+
+The objective of this document is to realize text mining operations with R. The main goal is to use sentiment analysis to accurately read the positivity or negativity of product reviews using AFINN, plotting them and analyzing the results.
+
+Aside from pure sentiment analysis, other things have been tested such as finding the most common positive or negative words associated with each sentiment in order to generate plots and display them as word clouds.
+
+The dataset used is from Stanford university: http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/ and contains product reviews and metadata from Amazon, including 143.7 million reviews spanning May 1996 - July 2014.
+
+As the dataset is immense, only a small part containing reviews from cell phones and accessories will be used: http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Cell_Phones_and_Accessories_5.json.gz
+
+# Sources
+
+The most helpful article was on Yelp review analysis: 
+
+[Does sentiment analysis work? A tidy analysis of Yelp reviews:](http://varianceexplained.org/r/yelp-sentiment/) http://varianceexplained.org/r/yelp-sentiment/
+
+Other sources used for this project:  
+
+* [Following Up On “Does Sentiment Analysis Work? A tidy Analysis of Yelp Reviews”:](http://rstudio-pubs-static.s3.amazonaws.com/306818_2a98f9dc58fd409ba2a9fe0916691103.html)  http://rstudio-pubs-static.s3.amazonaws.com/306818_2a98f9dc58fd409ba2a9fe0916691103.html  
+* [Sentiment Analysis basics:](https://bookdown.org/psonkin18/berkshire/sentiment.html)  https://bookdown.org/psonkin18/berkshire/sentiment.html  
+* [Assignment 2 – Movie reviews:](https://rstudio-pubs-static.s3.amazonaws.com/466037_c10e13e8392640c6b26ee9092d13c575.html)  https://rstudio-pubs-static.s3.amazonaws.com/466037_c10e13e8392640c6b26ee9092d13c575.html  
+* [Top 10 R Packages For Natural Language Processing (NLP):](https://analyticsindiamag.com/top-10-r-packages-for-natural-language-processing-nlp/)  https://analyticsindiamag.com/top-10-r-packages-for-natural-language-processing-nlp/  
+
+# Objectives
+
+The main objectives of this exercise are: 
+
+* Afinn analysis to check if word sentiment is related to review star rating
+* Identify and analyze the most common words, words associated with sentiments, plot them and their associated wordmaps
+* Outlier analysis to find reviews that have good sentiment and few stars
+* TF-IDF, find how important words are in the collection of reviews
+
+# Execution
+
+Remove Objects from environment
+```{r}
+rm(list = ls())   
+```
+Clean terminal output
+```{r}
+cat("\014")     
+```
+Import libraries
+```{r message=FALSE}
+library(dplyr)
+library(readr)
+library(stringr)
+library(jsonlite)
+library(kableExtra)
+library(textdata)
+library(tidytext)
+library(data.table)
+library(ggplot2)
+library(R.utils)
+library(xtable)
+library(wordcloud)
+library(reshape2)
+```
+Set working directory
+```{r}
+setwd("~/Projects/NLP_MUII/NLP_Project/")
+```
+Delete file
+```{r}
+file.remove("reviews_CellPhones_Accessories.json")
+```
+Download and unzip file
+```{r}
+fileloc <- "reviews_CellPhones_Accessories.json.gz"
+download.file("http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Cell_Phones_and_Accessories_5.json.gz",fileloc)
+gunzip(fileloc)
+```
+Read into R
+```{r}
+cell_reviews_file <- "reviews_CellPhones_Accessories.json"
+```
+Read_lines creates character vector for each line
+```{r}
+review_lines <- read_lines(cell_reviews_file, progress = TRUE)
+reviews_combined <- str_c("[", str_c(review_lines, collapse = ", "), "]")
+```
+Flatten and turn into a tibble
+```{r}
+df_reviews <- fromJSON(reviews_combined) %>%
+  flatten() %>%
+  tbl_df()
+```
+Verify that the tibble format works (5 rows only)
+```{r results = 'asis'}
+kable(df_reviews[1:5,]) %>%
+  kable_styling("striped", full_width = F, latex_options = "HOLD_position") 
+```
+## Tidy Text
+Tidy principles dictate that in a data set, each variable is a column, each observation a row, and each manner of observational unit a table.  
+
+Create a unique identifier for each review
+```{r}
+df_reviews <- df_reviews %>% mutate(reviewID = row_number())
+```
+Unnest text column
+```{r}
+df_reviews_words <- df_reviews %>%
+  select(asin,reviewID,reviewText,overall) %>%
+  unnest_tokens(word,reviewText) %>%
+  filter(!word %in% stop_words$word,
+         str_detect(word,"^[a-z']+$"))
+```
+Unnested table example (5 rows)
+```{r}
+kable(df_reviews_words[1:5,]) %>%
+  kable_styling("striped", full_width = F, latex_options = "HOLD_position") 
+```
+## AFINN Analysis
+
+The AFINN lexicon will be used to provide scores for words on a scale of -5 (most negative) to +5 (most positive)
+
+Values for the AFINN lexicon
+```{r}
+AFINN_lex_sent <- get_sentiments("afinn") %>%
+  select(word, afinn_score = value)
+```
+Join AFINN to the tidy text table of Amazon reviews
+```{r}
+AFINN_reviews_sentiment <- df_reviews_words %>%
+  inner_join(AFINN_lex_sent, by = "word") %>%
+  group_by(reviewID, overall) %>%
+  summarize(sentiment = mean(afinn_score))
+```
+Table preview
+```{r}
+kable(AFINN_reviews_sentiment[1:10,]) %>%
+  kable_styling("striped", full_width = F, latex_options = "HOLD_position") 
+```
+
+As we can see, now the results include a sentiment value along with their score
+
+Summary table
+```{r}
+dt_ars <- data.table(AFINN_reviews_sentiment)
+dt_ars <- dt_ars[,list(mean=mean(sentiment),sd=sd(sentiment)),by=overall]
+dt_ars[order(overall)]
+```
+Box plot
+```{r}
+ggplot(AFINN_reviews_sentiment, aes(overall, sentiment, group = overall)) + geom_boxplot()
+```
+The plot shows clearly that there is a relative correlation between the aggregate AFINN sentiment score of a review and its star rating. 
+
+In the Yelp example this effect was more significant, maybe Amazon reviews are naturally more normalized?
+
+## Word Sentiment and Word Clouds
+
+Most common words in all reviews 
+```{r}
+xtable(head(df_reviews_words %>% 
+              count(word, sort = TRUE))) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, latex_options = "HOLD_position")
+```
+Plot common words with more than 20000 occurrences
+```{r}
+df_reviews_words %>% 
+  count(word, sort = TRUE) %>% 
+  filter(n > 20000) %>% 
+  mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(word, n)) + 
+  geom_col() + 
+  xlab(NULL) + 
+  coord_flip()
+```
+Find most common positive and negative words
+```{r}
+Sentiment_Analysis_Word_Count <- df_reviews_words %>% 
+  inner_join(get_sentiments("bing"), "word") %>% 
+  count(word, sentiment, sort = TRUE) %>% 
+  ungroup()
+```
+
+This plot clearly shows that **phone** is the most common word and the one with the highest weight which is correct as we saw before that this word had over 150.000 occurrences in the reviews; as much as three times more occurrences than **screen** which is the second one. 
+
+Plot the words and their contribution to the sentiment
+```{r}
+Sentiment_Analysis_Word_Count %>% 
+  group_by(sentiment) %>% 
+  top_n(12, n) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~sentiment, scales = "free_y") + 
+  labs(y = "Contribution to Sentiment", x = NULL) + 
+  coord_flip()
+```
+
+The most negative words in the reviews are **hard**, **cheap** and **bad** and the most positive are **nice**, **love** and **easy**. These results seem to indicate that the analysis is correct as these words are mostly what you would expect when choosing positive or negative words for a review. 
+
+Plot their relationship
+```{r}
+Sentiment_Analysis_Word_Contribution <- df_reviews_words %>% 
+  inner_join(get_sentiments("afinn"), by = "word") %>% 
+  group_by(word) %>% 
+  summarize(occurences = n(), contribution = sum(value))
+
+Sentiment_Analysis_Word_Contribution %>% 
+  top_n(50, abs(contribution)) %>%
+  mutate(word = reorder(word, contribution)) %>%
+  ggplot(aes(word, contribution, fill = contribution > 0)) + 
+  geom_col(show.legend = FALSE) + 
+  coord_flip()
+```
+Plot the word clouds
+```{r message=FALSE}
+df_reviews_words %>% 
+  anti_join(stop_words, "word") %>%
+  count(word) %>% 
+  with(wordcloud(word, n, max.words = 50))
+```
+Plot the word clouds grouped by sentiment
+```{r message=FALSE}
+df_reviews_words %>% 
+  inner_join(get_sentiments("bing"), "word") %>%
+  count(word, sentiment, sort = TRUE) %>% 
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>% 
+  comparison.cloud(colors = c("gray20", "gray80"), max.words = 50)
+```
+Here **hard** and **nice/love** seem to be the dominant words for positive and negative sentiments.
+
+## Outlier Analysis
+
+Given a dataset as big as this one, there will be cases where a review that has very few stars has a sentiment that is positive. This can be a mistake on the part of the user or done on purpose in order to be displayed at the top.
+
+1. One star review with a sentiment > 3.70
+```{r}
+AFINN_reviews_sentiment_outlier_1 <- AFINN_reviews_sentiment %>%
+  filter(overall == 1 & sentiment > 3.70) %>%
+  select(reviewID)
+
+df_reviews_outlier_low <- df_reviews %>%
+  select(reviewID,reviewText,overall) %>%
+  filter(reviewID %in% as.list(AFINN_reviews_sentiment_outlier_1$reviewID))
+
+kable(df_reviews_outlier_low) %>%
+  kable_styling("striped", full_width = F, latex_options = "HOLD_position") 
+```
+
+There are many reviews that show an input error from the user and others in which the user dismisses the product bought but praises another product in the review. 
+
+2. Five star reviews with sentiment < 3.70
+
+```{r}
+AFINN_reviews_sentiment_outlier_5 <- AFINN_reviews_sentiment %>%
+  filter(overall == 5 & sentiment < -3.70) %>%
+  select(reviewID)
+
+df_reviews_outlier_high <- df_reviews %>%
+  select(reviewID,reviewText,overall) %>%
+  filter(reviewID %in% as.list(AFINN_reviews_sentiment_outlier_5$reviewID))
+
+kable(df_reviews_outlier_high) %>%
+  kable_styling("striped", full_width = F, latex_options = "HOLD_position") 
+```
+
+The low score on the sentiment here is mostly due to profanities and expletives that the users write in order to praise the product but that are interpreted as having negative sentiment value
+
+## TF-IDF
+
+The idea of using TF(Term Frequency)-IDF(Inverse Document Frequency) is to find words that are important in the reviews but are not too common
+
+Calculate TF-IDF
+```{r}
+term_frequency_review <- df_reviews_words %>% count(word, sort = TRUE)
+term_frequency_review$total_words <- as.numeric(term_frequency_review %>% summarize(total = sum(n)))
+term_frequency_review$document <- as.character("Review")
+term_frequency_review <- term_frequency_review %>% 
+bind_tf_idf(word, document, n)
+```
+Plot the results
+```{r}
+term_frequency_review %>% 
+  arrange(desc(tf)) %>% 
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(document) %>% 
+  top_n(15, tf) %>% 
+  ungroup() %>% 
+  ggplot(aes(word, tf, fill = document)) + 
+  geom_col(show.legend = FALSE) + 
+  labs(x = NULL, y = "tf-idf") + 
+  facet_wrap(~document, ncol = 2, scales = "free") + 
+  coord_flip()
+``` 
+
+As we can see, the three most important words that appear in the reviews are **phone**, **screen** and **battery**. 
+
+This result is almost the same as the values obtained in the chart that plotted the number of occurrences of words in the reviews. There might not be many words that validate the idea of the TF-IDF or the sheer number of occurrences of words such as **phone** dwarf their contribution.
